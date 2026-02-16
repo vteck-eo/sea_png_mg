@@ -1,20 +1,19 @@
-
-############################################################
-# 🌏 UMAP – Mangrove Forest Embedding Structure (2017–2024)
+############################################################ 
+# 🌏 UMAP – Mangrove Class Separation Over Years
 ############################################################
 
 # =========================================================
-# 📦  Packacges and Libraries
+# 📦 Libraries
 # =========================================================
 library(dplyr)
 library(readr)
 library(ggplot2)
 library(viridis)
-library(jsonlite)
 library(umap)
+library(jsonlite)
 
 # =========================================================
-# 📂 Paths & Years
+# 📂 Paths & years
 # =========================================================
 in_dir  <- "username/"
 out_dir <- "username/"
@@ -33,14 +32,20 @@ extract_lonlat <- function(geo_json) {
 }
 
 # =========================================================
-# 1️⃣ Load Data
+# 1️⃣ Load all years
 # =========================================================
 all_data <- lapply(years, function(yr) {
 
   f <- file.path(in_dir, sprintf("sea_emb_samples_%d_all.csv", yr))
-  if (!file.exists(f)) return(NULL)
+  if (!file.exists(f)) {
+    warning("⚠ Missing file: ", f)
+    return(NULL)
+  }
 
   d <- read_csv(f, show_col_types = FALSE)
+
+  if (!(".geo" %in% names(d)))
+    stop("❌ '.geo' column not found in: ", f)
 
   coords <- t(sapply(d$.geo, extract_lonlat))
   coords <- as.data.frame(coords)
@@ -48,87 +53,151 @@ all_data <- lapply(years, function(yr) {
   d$lon_x <- coords$lon_x
   d$lat_y <- coords$lat_y
   d$year  <- yr
-  d
 
+  d
 }) %>% bind_rows()
 
+cat("Total loaded:", nrow(all_data), "\n")
+
 # =========================================================
-# 2️⃣ Detect Embedding Columns
+# 2️⃣ Detect embedding columns
 # =========================================================
 numeric_cols <- names(all_data)[sapply(all_data, is.numeric)]
-exclude <- c("lon_x","lat_y","year","class","land_class","class_num")
-emb_cols <- setdiff(numeric_cols, exclude)
+
+exclude <- c("lon_x","lat_y","year",
+             "class","land_class","class_num")
+
+emb_candidates <- setdiff(numeric_cols, exclude)
+
+emb_cols <- emb_candidates[
+  sapply(all_data[emb_candidates], function(x)
+    length(unique(x)) > 50)
+]
+
+cat("Embedding dimensions detected:", length(emb_cols), "\n")
+
+if (length(emb_cols) == 0)
+  stop("❌ No embedding columns detected!")
 
 # =========================================================
-# 3️⃣ Clean Dataset
+# 3️⃣ Clean dataset
 # =========================================================
-class_col <- if ("land_class" %in% names(all_data)) "land_class" else "class"
+class_col <- if ("land_class" %in% names(all_data))
+  "land_class" else "class"
 
 df <- all_data %>%
-  filter(!is.na(lon_x),
-         !is.na(lat_y),
-         !!sym(class_col) %in% c(0,1)) %>%
-  mutate(
-    class_num = !!sym(class_col),
-    year      = factor(year)
+  filter(
+    !is.na(lon_x),
+    !is.na(lat_y),
+    !!sym(class_col) %in% c(0,1)
   ) %>%
-  select(year, class_num, all_of(emb_cols))
+  mutate(
+    class_num   = !!sym(class_col),
+    class_label = ifelse(class_num == 1,
+                         "Mangrove",
+                         "Non-mangrove"),
+    year        = factor(year, levels = years)
+  ) %>%
+  select(year, class_num, class_label,
+         lon_x, lat_y, all_of(emb_cols))
 
-# Optional subsampling for speed
+cat("Points for analysis:", nrow(df), "\n")
+
+# =========================================================
+# 4️⃣ Subsample (max 60k)
+# =========================================================
 set.seed(42)
 n_max <- 60000
-if (nrow(df) > n_max) df <- df %>% sample_n(n_max)
 
-emb_mat <- as.matrix(df %>% select(all_of(emb_cols)))
+df_sub <- if (nrow(df) > n_max)
+  df %>% sample_n(n_max)
+else df
 
-# =========================================================
-# 4️⃣ Run UMAP
-# =========================================================
-umap_config <- umap::umap.defaults
-umap_config$n_neighbors <- 30
-umap_config$min_dist    <- 0.1
-umap_config$metric      <- "euclidean"
-
-umap_res <- umap::umap(emb_mat, config = umap_config)
-
-df$UMAP1 <- umap_res$layout[,1]
-df$UMAP2 <- umap_res$layout[,2]
+cat("Subsampled:", nrow(df_sub), "\n")
 
 # =========================================================
-# 5️⃣ Plot
+# 5️⃣ Run UMAP
 # =========================================================
-pal <- viridis(length(levels(df$year)), option = "D")
+cat("Running UMAP...\n")
 
+emb_mat <- as.matrix(df_sub %>% select(all_of(emb_cols)))
+
+# IMPORTANT: scale embeddings
+emb_mat_scaled <- scale(emb_mat)
+
+umap_cfg <- umap::umap.defaults
+umap_cfg$n_neighbors <- 30
+umap_cfg$min_dist    <- 0.1
+umap_cfg$metric      <- "euclidean"
+
+umap_res <- umap::umap(emb_mat_scaled,
+                       config = umap_cfg)
+
+df_sub$UMAP1 <- umap_res$layout[,1]
+df_sub$UMAP2 <- umap_res$layout[,2]
+
+cat("UMAP completed.\n")
+
+# =========================================================
+# 🎨 Colors
+# =========================================================
+pal <- viridis::viridis(length(years),
+                        option = "D")
+
+# =========================================================
+# 📊 Plot UMAP
+# =========================================================
 p_umap <- ggplot() +
+
+  # Non-mangrove background
   geom_point(
-    data = df %>% filter(class_num == 0),
+    data = df_sub %>% filter(class_num == 0),
     aes(UMAP1, UMAP2),
     color = "grey90",
     alpha = 0.3,
     size = 0.5
   ) +
+
+  # Mangrove colored by year
   geom_point(
-    data = df %>% filter(class_num == 1),
+    data = df_sub %>% filter(class_num == 1),
     aes(UMAP1, UMAP2, color = year),
     size = 1.1,
     alpha = 0.9
   ) +
-  scale_color_manual(values = pal, name = "Year") +
+
+  scale_color_manual(
+    name = "Year",
+    values = pal,
+    guide = guide_legend(
+      override.aes = list(size = 4)
+    )
+  ) +
+
   theme_minimal(base_size = 14) +
-  labs(x = "UMAP-1", y = "UMAP-2") +
+
+  labs(
+    x = "UMAP-1",
+    y = "UMAP-2"
+  ) +
+
   theme(
-    axis.line = element_line(color="black", linewidth=1),
-    axis.ticks = element_line(color="black"),
+    axis.line = element_line(color="black",
+                             size=0.5),
+    axis.ticks = element_line(color="black",
+                              size=0.4),
     panel.grid.minor = element_blank(),
-    legend.position = "right",
-    legend.title = element_text(face="bold")
+    panel.grid.major = element_line(color="grey92",
+                                    size=0.3),
+    legend.position = "right"
   )
 
 # =========================================================
 # 💾 Save
 # =========================================================
 ggsave(
-  file.path(out_dir, "UMAP_mg.png"),
+  file.path(out_dir,
+            "UMAP_Mangrove_2017_2024.png"),
   p_umap,
   width = 10,
   height = 7,
@@ -136,5 +205,4 @@ ggsave(
   bg = "white"
 )
 
-cat("✅ UMAP export.\n")
-
+cat("✅ DONE.\n")
