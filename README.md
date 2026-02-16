@@ -7,6 +7,8 @@ Embedding-based analysis for mangrove forest mapping (2017–2024)
 2. Geographic distance
 <img width="6000" height="2700" alt="MC_NearestNeighbor_GridOnly_ALL_2017_2024" src="https://github.com/user-attachments/assets/7c25c1fa-2798-4060-9b56-5a0b9dca58cb" />
 3. PCA
-![PCA_RGB_Mangro](https://github.com/user-attachments/assets/a8a05bdd-b6c0-46e0-9b0f-af33d9f0eac7)
+![PCA_RGB_Mangro](https://github.com/user-attachments/assets/5a463b64-4ba5-4600-8591-3b456f2c0f68)
+
+
 
 
