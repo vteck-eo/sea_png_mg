@@ -1,66 +1,68 @@
 /**************************************************************
  🌿 Mangrove Mapping using Satellite Embeddings in GEE
+ Description:
+ Embedding-based mangrove classification using
+ GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL
 **************************************************************/
 
+
 /**************************************************************
- 1️⃣ DEFINE COASTAL AOI
- - Shoreline buffer 
- - Intersect with national boundary
+ DEFINE COASTAL AOI
+ - Shoreline buffer
+ - Intersection with national boundary
 **************************************************************/
 
 // Load shoreline dataset
-var shoreline = ee.FeatureCollection(
-  "you AOI"
+var shoreline = ee.FeatureCollection("your_AOI_asset");
+
+// Filter shoreline using attribute
+var shorelineFiltered = shoreline.filter(
+  ee.Filter.eq("Your_Attribute", "Your_Object")
 );
 
-// Filter shoreline for Vietnam
-var shoreline = shoreline.filter(
-  ee.Filter.eq("Your Atribute", "Your object")
-);
+Map.addLayer(shorelineFiltered, {color:"blue"}, "Shoreline", false);
 
-Map.addLayer(shoreline, {color:"blue"}, "Shoreline", false);
-
-// Create 30 km coastal buffer
+// Create coastal buffer (30 km)
 var bufferDist = 30000;  // meters
 
-var shorelineBuffer = shoreline
+var shorelineBuffer = shorelineFiltered
   .map(function(f){ return f.buffer(bufferDist); })
-  .union();   // dissolve
+  .union();
 
 Map.addLayer(
   shorelineBuffer,
   {color:"red"},
-  "Shoreline Buffer",
+  "Shoreline Buffer (30 km)",
   false
 );
 
 // Load FAO boundary (GAUL 2015)
 var fao = ee.FeatureCollection("FAO/GAUL/2015/level0");
 
-var AOI = fao
+var countryBoundary = fao
   .filter(ee.Filter.eq('ADM0_NAME', 'Country'))
   .geometry();
 
-// Final AOI = Country ∩ coastal buffer
-var aoi = AOI.intersection(shorelineBuffer, 1);
+// Final AOI = Country ∩ Coastal Buffer
+var aoi = countryBoundary.intersection(shorelineBuffer, 1);
 
 Map.addLayer(aoi, {color: 'cyan'}, 'Final AOI', false);
 
 
 /**************************************************************
- 2️⃣ LOAD TRAINING SAMPLES
+ LOAD TRAINING SAMPLES
 **************************************************************/
 
 var samples = ee.FeatureCollection("your_sample_asset")
   .filterBounds(aoi)
-  .filter(ee.Filter.neq("A01", null));  // remove invalid
+  .filter(ee.Filter.neq("A01", null));  // remove invalid samples
 
 print('Sample preview:', samples.limit(10));
 print('Class histogram:', samples.aggregate_histogram('land_class'));
 
 
 /**************************************************************
- 3️⃣ LOAD GOOGLE SATELLITE EMBEDDINGS (ANNUAL)
+ LOAD GOOGLE SATELLITE EMBEDDINGS (ANNUAL)
 **************************************************************/
 
 var annualEmbeddings =
@@ -77,12 +79,13 @@ function getYearlyEmbeddings(year) {
     .clip(aoi);
 }
 
+// Example year
 var img = getYearlyEmbeddings(2017);
 print("Embedding image:", img);
 
 
 /**************************************************************
- 4️⃣ PREPARE BALANCED TRAINING DATA
+ PREPARE BALANCED TRAINING DATA
 **************************************************************/
 
 var mangrove = samples
@@ -103,7 +106,7 @@ Map.addLayer(balanced, {color: 'yellow'}, 'Balanced Samples', false);
 
 
 /**************************************************************
- 5️⃣ EXTRACT EMBEDDING FEATURES
+ EXTRACT EMBEDDING FEATURES
 **************************************************************/
 
 var trainingData = img.sampleRegions({
@@ -115,7 +118,7 @@ var trainingData = img.sampleRegions({
 
 
 /**************************************************************
- 6️⃣ TRAIN GRADIENT TREE BOOST CLASSIFIER
+ TRAIN GRADIENT TREE BOOST CLASSIFIER
 **************************************************************/
 
 var withRandom = trainingData.randomColumn('rand');
@@ -137,7 +140,7 @@ print("Model explanation:", model.explain());
 
 
 /**************************************************************
- 7️⃣ FEATURE IMPORTANCE
+ FEATURE IMPORTANCE
 **************************************************************/
 
 var importance = ee.Dictionary(model.explain().get('importance'));
@@ -165,7 +168,7 @@ print(chart);
 
 
 /**************************************************************
- 8️⃣ GENERATE MANGROVE PROBABILITY MAP
+ GENERATE MANGROVE PROBABILITY MAP
 **************************************************************/
 
 var probability = img.classify(model).multiply(100);
@@ -178,7 +181,7 @@ Map.addLayer(probability, {
 
 
 /**************************************************************
- 🔟 ACCURACY ASSESSMENT (Model Performance)
+ ACCURACY ASSESSMENT
 **************************************************************/
 
 var tested = testing.classify(model);
