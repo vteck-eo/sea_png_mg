@@ -1,0 +1,197 @@
+/**************************************************************
+ 🌿 Mangrove Mapping using Satellite Embeddings in GEE
+**************************************************************/
+
+/**************************************************************
+ 1️⃣ DEFINE COASTAL AOI
+ - Shoreline buffer 
+ - Intersect with national boundary
+**************************************************************/
+
+// Load shoreline dataset
+var shoreline = ee.FeatureCollection(
+  "you AOI"
+);
+
+// Filter shoreline for Vietnam
+var shoreline = shoreline.filter(
+  ee.Filter.eq("Your Atribute", "Your object")
+);
+
+Map.addLayer(shoreline, {color:"blue"}, "Shoreline", false);
+
+// Create 30 km coastal buffer
+var bufferDist = 30000;  // meters
+
+var shorelineBuffer = shoreline
+  .map(function(f){ return f.buffer(bufferDist); })
+  .union();   // dissolve
+
+Map.addLayer(
+  shorelineBuffer,
+  {color:"red"},
+  "Shoreline Buffer",
+  false
+);
+
+// Load FAO boundary (GAUL 2015)
+var fao = ee.FeatureCollection("FAO/GAUL/2015/level0");
+
+var AOI = fao
+  .filter(ee.Filter.eq('ADM0_NAME', 'Country'))
+  .geometry();
+
+// Final AOI = Country ∩ coastal buffer
+var aoi = AOI.intersection(shorelineBuffer, 1);
+
+Map.addLayer(aoi, {color: 'cyan'}, 'Final AOI', false);
+
+
+/**************************************************************
+ 2️⃣ LOAD TRAINING SAMPLES
+**************************************************************/
+
+var samples = ee.FeatureCollection("your_sample_asset")
+  .filterBounds(aoi)
+  .filter(ee.Filter.neq("A01", null));  // remove invalid
+
+print('Sample preview:', samples.limit(10));
+print('Class histogram:', samples.aggregate_histogram('land_class'));
+
+
+/**************************************************************
+ 3️⃣ LOAD GOOGLE SATELLITE EMBEDDINGS (ANNUAL)
+**************************************************************/
+
+var annualEmbeddings =
+  ee.ImageCollection('GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL');
+
+function getYearlyEmbeddings(year) {
+  var startDate = ee.Date.fromYMD(year, 1, 1);
+  var endDate   = startDate.advance(1, 'year');
+
+  return annualEmbeddings
+    .filterDate(startDate, endDate)
+    .filterBounds(aoi)
+    .mosaic()
+    .clip(aoi);
+}
+
+var img = getYearlyEmbeddings(2017);
+print("Embedding image:", img);
+
+
+/**************************************************************
+ 4️⃣ PREPARE BALANCED TRAINING DATA
+**************************************************************/
+
+var mangrove = samples
+  .filter(ee.Filter.eq('land_class', 1))
+  .randomColumn('rand')
+  .sort('rand')
+  .limit(1000);
+
+var nonMangrove = samples
+  .filter(ee.Filter.eq('land_class', 0))
+  .randomColumn('rand')
+  .sort('rand')
+  .limit(1000);
+
+var balanced = mangrove.merge(nonMangrove);
+
+Map.addLayer(balanced, {color: 'yellow'}, 'Balanced Samples', false);
+
+
+/**************************************************************
+ 5️⃣ EXTRACT EMBEDDING FEATURES
+**************************************************************/
+
+var trainingData = img.sampleRegions({
+  collection: balanced,
+  properties: ['land_class'],
+  scale: 10,
+  geometries: true
+}).filter(ee.Filter.notNull(img.bandNames()));
+
+
+/**************************************************************
+ 6️⃣ TRAIN GRADIENT TREE BOOST CLASSIFIER
+**************************************************************/
+
+var withRandom = trainingData.randomColumn('rand');
+var split = 0.95;
+
+var training = withRandom.filter(ee.Filter.lt('rand', split));
+var testing  = withRandom.filter(ee.Filter.gte('rand', split));
+
+var model = ee.Classifier.smileGradientTreeBoost({
+  numberOfTrees: 100,
+  shrinkage: 0.075
+}).train({
+  features: training,
+  classProperty: 'land_class',
+  inputProperties: img.bandNames()
+}).setOutputMode('PROBABILITY');
+
+print("Model explanation:", model.explain());
+
+
+/**************************************************************
+ 7️⃣ FEATURE IMPORTANCE
+**************************************************************/
+
+var importance = ee.Dictionary(model.explain().get('importance'));
+
+var importanceFC = ee.FeatureCollection(
+  importance.keys().map(function(k){
+    return ee.Feature(null, {
+      band: k,
+      importance: importance.get(k)
+    });
+  })
+);
+
+var sorted = importanceFC.sort('importance', false);
+
+var chart = ui.Chart.feature.byFeature(
+  sorted, 'band', 'importance'
+).setChartType('ColumnChart')
+ .setOptions({
+   title: 'Embedding Band Importance',
+   legend: {position: 'none'}
+ });
+
+print(chart);
+
+
+/**************************************************************
+ 8️⃣ GENERATE MANGROVE PROBABILITY MAP
+**************************************************************/
+
+var probability = img.classify(model).multiply(100);
+
+Map.addLayer(probability, {
+  min: 0,
+  max: 100,
+  palette: ['white', 'yellow', 'orange', 'red', 'purple']
+}, 'Mangrove Probability');
+
+
+/**************************************************************
+ 🔟 ACCURACY ASSESSMENT (Model Performance)
+**************************************************************/
+
+var tested = testing.classify(model);
+
+var validated = tested.map(function(f) {
+  var prob = ee.Number(f.get('classification'));
+  var pred = prob.gt(0.5).int();  // threshold = 0.5
+  return f.set('predicted', pred);
+});
+
+var cm = validated.errorMatrix('land_class', 'predicted');
+
+print('Confusion Matrix:', cm);
+print('Overall Accuracy:', cm.accuracy());
+print('Producer Accuracy:', cm.producersAccuracy());
+print('User Accuracy:', cm.consumersAccuracy());
