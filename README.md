@@ -17,8 +17,6 @@ Embedding-based analysis for mangrove forest mapping (2017–2024)
 4. Mangrove forest Map: 
 https://ee-vteck.projects.earthengine.app/view/seapngmangroveforest
 
-5. ROC
-<img width="691" height="547" alt="ROC_validation" src="https://github.com/user-attachments/assets/24bc3a2c-b07e-49a5-98f5-a88f94dad456" />
 
 
 
