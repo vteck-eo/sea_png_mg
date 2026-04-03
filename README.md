@@ -15,7 +15,7 @@ Embedding-based analysis for mangrove forest mapping (2017–2024)
 
 
 4. Mangrove forest Map: 
-[https://ee-vteck.projects.earthengine.app/view/seapngmangroveforest](https://servir-mekong.earthengine.app/view/seapngmangroveforest)
+(https://servir-mekong.earthengine.app/view/seapngmangroveforest)
 
 
 
